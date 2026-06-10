@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Xadrez 3D - Multiplayer</title>
+  <link rel="stylesheet" href="/style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/vendor/three/three.module.js",
+        "three/addons/controls/OrbitControls.js": "/vendor/three/controls/OrbitControls.js",
+        "chess.js": "/vendor/chess.esm.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <canvas id="board-canvas"></canvas>
+
+    <div id="hud">
+      <div id="hud-top">
+        <div class="panel" id="status-panel">
+          <div id="role">Conectando...</div>
+          <div id="turn">-</div>
+          <div id="message"></div>
+        </div>
+        <div class="panel" id="players-panel">
+          <div>♔ Branco: <span id="white-status">livre</span></div>
+          <div>♚ Preto: <span id="black-status">livre</span></div>
+          <div>Espectadores: <span id="spectator-count">0</span></div>
+        </div>
+      </div>
+
+      <div id="hud-bottom">
+        <div class="panel" id="history-panel">
+          <h3>Movimentos</h3>
+          <ol id="move-list"></ol>
+        </div>
+        <div class="panel" id="controls-panel">
+          <button id="reset-btn">Novo Jogo</button>
+          <button id="flip-btn">Girar Tabuleiro</button>
+          <p class="hint">Arraste para girar a câmera, clique numa peça e depois numa casa de destino para mover.</p>
+        </div>
+      </div>
+    </div>
+
+    <div id="promotion-modal" class="hidden">
+      <div class="promotion-box">
+        <p>Promover peão para:</p>
+        <div class="promotion-options">
+          <button data-piece="q">Dama</button>
+          <button data-piece="r">Torre</button>
+          <button data-piece="b">Bispo</button>
+          <button data-piece="n">Cavalo</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/main.js"></script>
+</body>
+</html>
