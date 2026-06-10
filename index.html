@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Resolvedor de Cubo Mágico 3D</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧊</text></svg>">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="vendor/cube.js"></script>
+  <script src="vendor/async.js"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three.module.min.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <main class="app">
+    <section class="viewport">
+      <canvas id="cube-canvas"></canvas>
+      <div id="status" class="status">Carregando solver…</div>
+    </section>
+
+    <aside class="panel">
+      <h1>Cubo Mágico 3D</h1>
+
+      <section class="group">
+        <h2>Embaralhar</h2>
+        <div class="move-grid">
+          <button class="move" data-move="U">U</button>
+          <button class="move" data-move="U'">U'</button>
+          <button class="move" data-move="D">D</button>
+          <button class="move" data-move="D'">D'</button>
+          <button class="move" data-move="L">L</button>
+          <button class="move" data-move="L'">L'</button>
+          <button class="move" data-move="R">R</button>
+          <button class="move" data-move="R'">R'</button>
+          <button class="move" data-move="F">F</button>
+          <button class="move" data-move="F'">F'</button>
+          <button class="move" data-move="B">B</button>
+          <button class="move" data-move="B'">B'</button>
+        </div>
+        <form id="sequence-form" class="sequence-form">
+          <input id="sequence-input" type="text" autocomplete="off"
+                 placeholder="Sequência, ex.: R U R' U'">
+          <button type="submit">Aplicar</button>
+        </form>
+        <div class="row">
+          <button id="scramble-btn">🎲 Embaralhar aleatório</button>
+          <button id="reset-btn">↺ Resetar</button>
+        </div>
+      </section>
+
+      <section class="group">
+        <h2>Solução em tempo real</h2>
+        <div id="solution" class="solution">—</div>
+        <button id="solve-btn" class="primary" disabled>▶ Resolver</button>
+      </section>
+
+      <section class="group">
+        <h2>Histórico de movimentos</h2>
+        <div id="history" class="history">—</div>
+      </section>
+
+      <section class="group">
+        <label class="speed-label" for="speed">
+          Velocidade da animação
+          <input id="speed" type="range" min="60" max="600" step="20" value="220">
+        </label>
+      </section>
+
+      <footer class="hint">
+        Arraste com o mouse para girar a câmera. Use a roda do mouse para
+        aproximar.
+      </footer>
+    </aside>
+  </main>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
