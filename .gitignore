@@ -1,0 +1,24 @@
+# dependencies
+node_modules/
+
+# builds
+dist/
+build/
+.expo/
+.turbo/
+*.tsbuildinfo
+
+# env
+.env
+.env.*
+!.env.example
+
+# logs e artefatos
+*.log
+coverage/
+
+# editor/os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

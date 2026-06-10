@@ -1,0 +1,26 @@
+# Deploy contínuo da API (doc 04, seção 6): staging a cada push em main.
+#
+# Stub da Fase 0 — para ativar:
+#   1. Escolher o PaaS (Railway/Fly.io/Render — ADR pendente) e criar os apps
+#      de staging e produção.
+#   2. Adicionar o token do provedor como secret (ex.: DEPLOY_TOKEN).
+#   3. Definir a variável de repositório DEPLOY_ENABLED=true.
+#   4. Substituir o passo de placeholder pelo CLI do provedor.
+name: Deploy API
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    if: vars.DEPLOY_ENABLED == 'true'
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy (placeholder)
+        run: |
+          echo "TODO: deploy via CLI do PaaS escolhido usando \$DEPLOY_TOKEN"
+          exit 1
