@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MiniCraft - Minecraft no Navegador</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+  body { font-family: 'Courier New', monospace; user-select: none; }
+  #game { position: absolute; inset: 0; }
+
+  /* Mira */
+  #crosshair {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 20px; height: 20px; pointer-events: none; z-index: 10;
+  }
+  #crosshair::before, #crosshair::after {
+    content: ''; position: absolute; background: rgba(255,255,255,0.85);
+    mix-blend-mode: difference;
+  }
+  #crosshair::before { left: 9px; top: 0; width: 2px; height: 20px; }
+  #crosshair::after { left: 0; top: 9px; width: 20px; height: 2px; }
+  #crosshair.enemy::before, #crosshair.enemy::after { background: #ff3030; mix-blend-mode: normal; }
+
+  /* Hotbar */
+  #hotbar {
+    position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 4px; z-index: 10; pointer-events: none;
+  }
+  .slot {
+    width: 52px; height: 52px; border: 3px solid #555;
+    background: rgba(0,0,0,0.5); border-radius: 4px; position: relative;
+    image-rendering: pixelated;
+  }
+  .slot.selected { border-color: #fff; transform: scale(1.1); }
+  .slot img { width: 100%; height: 100%; image-rendering: pixelated; }
+  .slot .key {
+    position: absolute; top: 1px; left: 3px; color: #fff; font-size: 11px;
+    text-shadow: 1px 1px 0 #000;
+  }
+  .slot .name {
+    position: absolute; bottom: 1px; left: 0; right: 0; text-align: center;
+    color: #fff; font-size: 8px; text-shadow: 1px 1px 0 #000; overflow: hidden;
+  }
+
+  /* Vida */
+  #health {
+    position: absolute; bottom: 76px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 2px; z-index: 10; pointer-events: none;
+    font-size: 20px; text-shadow: 1px 1px 0 #000;
+  }
+  #health span.empty { filter: grayscale(1) brightness(0.5); }
+
+  /* Info */
+  #info {
+    position: absolute; top: 10px; left: 10px; color: #fff; z-index: 10;
+    text-shadow: 1px 1px 0 #000; font-size: 14px; pointer-events: none; line-height: 1.5;
+  }
+
+  /* Flash de dano */
+  #damage-flash {
+    position: absolute; inset: 0; background: rgba(255,0,0,0.35);
+    opacity: 0; pointer-events: none; z-index: 20; transition: opacity 0.4s;
+  }
+
+  /* Menu / overlay */
+  #overlay {
+    position: absolute; inset: 0; background: rgba(0,0,0,0.7); z-index: 30;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #fff; text-align: center; cursor: pointer;
+  }
+  #overlay h1 { font-size: 42px; margin-bottom: 8px; color: #7ec850; text-shadow: 3px 3px 0 #2a4d1a; }
+  #overlay p { margin: 4px 0; font-size: 15px; color: #ccc; }
+  #overlay .click-msg { margin-top: 24px; font-size: 20px; color: #ffd700; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: 0.4; } }
+  #overlay.hidden, #death.hidden { display: none; }
+
+  #death {
+    position: absolute; inset: 0; background: rgba(120,0,0,0.6); z-index: 40;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #fff; text-align: center;
+  }
+  #death h1 { font-size: 48px; margin-bottom: 20px; }
+  #death button {
+    font-family: inherit; font-size: 20px; padding: 12px 32px; cursor: pointer;
+    background: #555; color: #fff; border: 3px solid #888; border-radius: 4px;
+  }
+  #death button:hover { background: #777; }
+</style>
+</head>
+<body>
+<div id="game"></div>
+<div id="crosshair"></div>
+<div id="hotbar"></div>
+<div id="health"></div>
+<div id="info"></div>
+<div id="damage-flash"></div>
+<div id="death" class="hidden">
+  <h1>Você morreu!</h1>
+  <button id="respawn-btn">Renascer</button>
+</div>
+<div id="overlay">
+  <h1>MiniCraft</h1>
+  <p><b>WASD</b> — mover &nbsp;|&nbsp; <b>Espaço</b> — pular &nbsp;|&nbsp; <b>F</b> — voar (Espaço/Shift sobe/desce)</p>
+  <p><b>Clique esquerdo</b> — quebrar bloco / atacar inimigo</p>
+  <p><b>Clique direito</b> — colocar bloco</p>
+  <p><b>1–9 ou roda do mouse</b> — escolher bloco</p>
+  <p>Modo criativo: blocos infinitos. Cuidado com os zumbis!</p>
+  <p class="click-msg">Clique para jogar</p>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+// ============================================================
+// Constantes
+// ============================================================
+const WORLD_X = 64, WORLD_Y = 48, WORLD_Z = 64;
+const GRAVITY = 24;
+const PLAYER = { width: 0.6, height: 1.8, eye: 1.62, speed: 4.3, flySpeed: 9, jump: 8 };
+const REACH = 6;           // alcance para blocos
+const ATTACK_RANGE = 4;    // alcance de ataque
+const ATTACK_DAMAGE = 10;
+const ATTACK_COOLDOWN = 0.35;
+const ZOMBIE = { width: 0.6, height: 1.9, speed: 2.2, hp: 30, damage: 4, attackCooldown: 1.0, maxCount: 8 };
+
+// Tipos de bloco
+const BLOCKS = {
+  1: { name: 'Grama',      faces: { top: 'grass_top', side: 'grass_side', bottom: 'dirt' } },
+  2: { name: 'Terra',      faces: { all: 'dirt' } },
+  3: { name: 'Pedra',      faces: { all: 'stone' } },
+  4: { name: 'Pedregulho', faces: { all: 'cobble' } },
+  5: { name: 'Tronco',     faces: { top: 'log_top', side: 'log_side', bottom: 'log_top' } },
+  6: { name: 'Tábuas',     faces: { all: 'planks' } },
+  7: { name: 'Folhas',     faces: { all: 'leaves' }, transparent: true },
+  8: { name: 'Areia',      faces: { all: 'sand' } },
+  9: { name: 'Vidro',      faces: { all: 'glass' }, transparent: true, glass: true },
+};
+
+// ============================================================
+// Texturas procedurais (16x16, estilo pixelado)
+// ============================================================
+function makeTexture(draw) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 16;
+  const ctx = c.getContext('2d');
+  draw(ctx);
+  return c;
+}
+function noisyFill(ctx, base, variance) {
+  for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+    const v = (Math.random() - 0.5) * variance;
+    ctx.fillStyle = `rgb(${base[0]+v|0},${base[1]+v|0},${base[2]+v|0})`;
+    ctx.fillRect(x, y, 1, 1);
+  }
+}
+const textureCanvases = {
+  grass_top:  makeTexture(ctx => noisyFill(ctx, [106, 170, 64], 30)),
+  dirt:       makeTexture(ctx => noisyFill(ctx, [134, 96, 67], 30)),
+  grass_side: makeTexture(ctx => {
+    noisyFill(ctx, [134, 96, 67], 30);
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 16; x++) {
+      if (y < 3 || Math.random() < 0.5) {
+        const v = (Math.random() - 0.5) * 30;
+        ctx.fillStyle = `rgb(${106+v|0},${170+v|0},${64+v|0})`;
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+  }),
+  stone:      makeTexture(ctx => noisyFill(ctx, [128, 128, 128], 25)),
+  cobble:     makeTexture(ctx => {
+    noisyFill(ctx, [110, 110, 110], 20);
+    ctx.fillStyle = 'rgba(60,60,60,0.8)';
+    for (let i = 0; i < 10; i++) {
+      const x = Math.random() * 14 | 0, y = Math.random() * 14 | 0;
+      ctx.strokeStyle = 'rgba(70,70,70,0.9)';
+      ctx.strokeRect(x + 0.5, y + 0.5, 3 + Math.random() * 3, 3 + Math.random() * 3);
+    }
+  }),
+  log_side:   makeTexture(ctx => {
+    noisyFill(ctx, [102, 81, 50], 16);
+    for (let x = 0; x < 16; x += 4) {
+      ctx.fillStyle = 'rgba(60,46,26,0.6)';
+      ctx.fillRect(x, 0, 1, 16);
+    }
+  }),
+  log_top:    makeTexture(ctx => {
+    noisyFill(ctx, [102, 81, 50], 16);
+    ctx.strokeStyle = 'rgba(180,150,100,0.8)';
+    for (let r = 2; r < 8; r += 2) ctx.strokeRect(8 - r, 8 - r, r * 2, r * 2);
+  }),
+  planks:     makeTexture(ctx => {
+    noisyFill(ctx, [162, 130, 78], 18);
+    ctx.fillStyle = 'rgba(80,60,35,0.8)';
+    ctx.fillRect(0, 3, 16, 1); ctx.fillRect(0, 7, 16, 1);
+    ctx.fillRect(0, 11, 16, 1); ctx.fillRect(0, 15, 16, 1);
+    ctx.fillRect(4, 0, 1, 4); ctx.fillRect(12, 4, 1, 4);
+    ctx.fillRect(4, 8, 1, 4); ctx.fillRect(12, 12, 1, 4);
+  }),
+  leaves:     makeTexture(ctx => {
+    noisyFill(ctx, [58, 130, 33], 40);
+    ctx.fillStyle = 'rgba(30,80,15,0.9)';
+    for (let i = 0; i < 24; i++) ctx.fillRect(Math.random() * 16 | 0, Math.random() * 16 | 0, 1, 1);
+  }),
+  sand:       makeTexture(ctx => noisyFill(ctx, [219, 207, 163], 18)),
+  glass:      makeTexture(ctx => {
+    ctx.clearRect(0, 0, 16, 16);
+    ctx.fillStyle = 'rgba(200,230,255,0.25)';
+    ctx.fillRect(0, 0, 16, 16);
+    ctx.fillStyle = 'rgba(230,245,255,0.9)';
+    ctx.fillRect(0, 0, 16, 1); ctx.fillRect(0, 15, 16, 1);
+    ctx.fillRect(0, 0, 1, 16); ctx.fillRect(15, 0, 1, 16);
+    ctx.fillRect(2, 2, 1, 4); ctx.fillRect(3, 2, 2, 1);
+  }),
+};
+const textures = {};
+for (const [name, canvas] of Object.entries(textureCanvases)) {
+  const t = new THREE.CanvasTexture(canvas);
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  t.colorSpace = THREE.SRGBColorSpace;
+  textures[name] = t;
+}
+
+// ============================================================
+// Mundo (voxels)
+// ============================================================
+const world = new Uint8Array(WORLD_X * WORLD_Y * WORLD_Z);
+const idx = (x, y, z) => x + z * WORLD_X + y * WORLD_X * WORLD_Z;
+function getBlock(x, y, z) {
+  if (x < 0 || y < 0 || z < 0 || x >= WORLD_X || y >= WORLD_Y || z >= WORLD_Z) return 0;
+  return world[idx(x, y, z)];
+}
+function setBlock(x, y, z, type) {
+  if (x < 0 || y < 0 || z < 0 || x >= WORLD_X || y >= WORLD_Y || z >= WORLD_Z) return;
+  world[idx(x, y, z)] = type;
+}
+const isSolid = (x, y, z) => getBlock(Math.floor(x), Math.floor(y), Math.floor(z)) !== 0;
+const isOpaque = (type) => type !== 0 && !BLOCKS[type].transparent;
+
+// Ruído de valor simples para o terreno
+function hash2(x, z) {
+  let n = (x * 374761393 + z * 668265263) | 0;
+  n = Math.imul(n ^ (n >>> 13), 1274126177);
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
+}
+function smooth(t) { return t * t * (3 - 2 * t); }
+function valueNoise(x, z) {
+  const xi = Math.floor(x), zi = Math.floor(z);
+  const xf = smooth(x - xi), zf = smooth(z - zi);
+  const a = hash2(xi, zi), b = hash2(xi + 1, zi);
+  const c = hash2(xi, zi + 1), d = hash2(xi + 1, zi + 1);
+  return a + (b - a) * xf + (c - a) * zf + (a - b - c + d) * xf * zf;
+}
+
+function generateWorld() {
+  const heights = [];
+  for (let x = 0; x < WORLD_X; x++) {
+    heights[x] = [];
+    for (let z = 0; z < WORLD_Z; z++) {
+      const h = Math.floor(
+        8 +
+        valueNoise(x / 16, z / 16) * 10 +
+        valueNoise(x / 6, z / 6) * 4
+      );
+      heights[x][z] = Math.max(3, Math.min(WORLD_Y - 10, h));
+    }
+  }
+  for (let x = 0; x < WORLD_X; x++) for (let z = 0; z < WORLD_Z; z++) {
+    const h = heights[x][z];
+    for (let y = 0; y <= h; y++) {
+      let type = 3; // pedra
+      if (y === h) type = h <= 8 ? 8 : 1;           // areia em terreno baixo, senão grama
+      else if (y >= h - 3) type = h <= 8 ? 8 : 2;   // terra/areia abaixo da superfície
+      setBlock(x, y, z, type);
+    }
+  }
+  // Árvores
+  for (let x = 3; x < WORLD_X - 3; x++) for (let z = 3; z < WORLD_Z - 3; z++) {
+    const h = heights[x][z];
+    if (getBlock(x, h, z) !== 1) continue;
+    if (hash2(x * 7 + 13, z * 11 + 31) < 0.985) continue;
+    const trunkH = 4 + Math.floor(hash2(x, z) * 2);
+    for (let y = 1; y <= trunkH; y++) setBlock(x, h + y, z, 5);
+    for (let dy = trunkH - 1; dy <= trunkH + 1; dy++) {
+      const r = dy === trunkH + 1 ? 1 : 2;
+      for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
+        if (dx === 0 && dz === 0 && dy <= trunkH) continue;
+        if (Math.abs(dx) === r && Math.abs(dz) === r && hash2(x + dx, z + dz) < 0.5) continue;
+        if (getBlock(x + dx, h + dy, z + dz) === 0) setBlock(x + dx, h + dy, z + dz, 7);
+      }
+    }
+    setBlock(x, h + trunkH + 2, z, 7);
+  }
+}
+function groundHeight(x, z) {
+  for (let y = WORLD_Y - 1; y >= 0; y--) {
+    if (getBlock(Math.floor(x), y, Math.floor(z)) !== 0) return y + 1;
+  }
+  return 0;
+}
+
+// ============================================================
+// Cena
+// ============================================================
+const scene = new THREE.Scene();
+const SKY = new THREE.Color(0x87ceeb);
+scene.background = SKY;
+scene.fog = new THREE.Fog(SKY, 40, 110);
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 300);
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.getElementById('game').appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+const sun = new THREE.DirectionalLight(0xfff4d6, 1.6);
+sun.position.set(40, 80, 20);
+scene.add(sun);
+
+// ============================================================
+// Malha do mundo (faces visíveis, sombreamento por face)
+// ============================================================
+// [dir, corners (4 vértices), normal]
+const FACES = [
+  { face: 'top',    dir: [0, 1, 0],  shade: 1.0,  corners: [[0,1,1],[1,1,1],[1,1,0],[0,1,0]] },
+  { face: 'bottom', dir: [0, -1, 0], shade: 0.5,  corners: [[0,0,0],[1,0,0],[1,0,1],[0,0,1]] },
+  { face: 'side',   dir: [1, 0, 0],  shade: 0.75, corners: [[1,0,1],[1,0,0],[1,1,0],[1,1,1]] },
+  { face: 'side',   dir: [-1, 0, 0], shade: 0.75, corners: [[0,0,0],[0,0,1],[0,1,1],[0,1,0]] },
+  { face: 'side',   dir: [0, 0, 1],  shade: 0.62, corners: [[0,0,1],[1,0,1],[1,1,1],[0,1,1]] },
+  { face: 'side',   dir: [0, 0, -1], shade: 0.62, corners: [[1,0,0],[0,0,0],[0,1,0],[1,1,0]] },
+];
+const FACE_UVS = [[0, 0], [1, 0], [1, 1], [0, 1]];
+
+let worldMeshes = [];
+function faceTexture(type, face) {
+  const f = BLOCKS[type].faces;
+  return f.all || f[face] || f.side;
+}
+function rebuildWorld() {
+  for (const m of worldMeshes) {
+    scene.remove(m);
+    m.geometry.dispose();
+  }
+  worldMeshes = [];
+  const groups = {}; // texName -> buffers
+
+  for (let y = 0; y < WORLD_Y; y++) for (let z = 0; z < WORLD_Z; z++) for (let x = 0; x < WORLD_X; x++) {
+    const type = world[idx(x, y, z)];
+    if (type === 0) continue;
+    for (const f of FACES) {
+      const n = getBlock(x + f.dir[0], y + f.dir[1], z + f.dir[2]);
+      // desenha a face se o vizinho é ar, ou transparente de outro tipo
+      if (n !== 0 && (isOpaque(n) || n === type)) continue;
+      const texName = faceTexture(type, f.face);
+      let g = groups[texName];
+      if (!g) g = groups[texName] = { pos: [], col: [], uv: [], index: [], type };
+      const base = g.pos.length / 3;
+      for (let i = 0; i < 4; i++) {
+        const c = f.corners[i];
+        g.pos.push(x + c[0], y + c[1], z + c[2]);
+        g.col.push(f.shade, f.shade, f.shade);
+        g.uv.push(FACE_UVS[i][0], FACE_UVS[i][1]);
+      }
+      g.index.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    }
+  }
+
+  for (const [texName, g] of Object.entries(groups)) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(g.pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(g.col, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(g.uv, 2));
+    geo.setIndex(g.index);
+    const isGlass = texName === 'glass';
+    const isLeaves = texName === 'leaves';
+    const mat = new THREE.MeshBasicMaterial({
+      map: textures[texName],
+      vertexColors: true,
+      transparent: isGlass,
+      opacity: isGlass ? 0.55 : 1,
+      alphaTest: isLeaves ? 0.5 : 0,
+      side: isGlass ? THREE.DoubleSide : THREE.FrontSide,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    scene.add(mesh);
+    worldMeshes.push(mesh);
+  }
+}
+
+// Destaque do bloco mirado
+const highlight = new THREE.LineSegments(
+  new THREE.EdgesGeometry(new THREE.BoxGeometry(1.002, 1.002, 1.002)),
+  new THREE.LineBasicMaterial({ color: 0x000000 })
+);
+highlight.visible = false;
+scene.add(highlight);
+
+// ============================================================
+// Raycast de voxels (DDA)
+// ============================================================
+function raycastVoxel(origin, dir, maxDist) {
+  let x = Math.floor(origin.x), y = Math.floor(origin.y), z = Math.floor(origin.z);
+  const stepX = Math.sign(dir.x), stepY = Math.sign(dir.y), stepZ = Math.sign(dir.z);
+  const tDeltaX = stepX !== 0 ? Math.abs(1 / dir.x) : Infinity;
+  const tDeltaY = stepY !== 0 ? Math.abs(1 / dir.y) : Infinity;
+  const tDeltaZ = stepZ !== 0 ? Math.abs(1 / dir.z) : Infinity;
+  let tMaxX = stepX > 0 ? (x + 1 - origin.x) * tDeltaX : stepX < 0 ? (origin.x - x) * tDeltaX : Infinity;
+  let tMaxY = stepY > 0 ? (y + 1 - origin.y) * tDeltaY : stepY < 0 ? (origin.y - y) * tDeltaY : Infinity;
+  let tMaxZ = stepZ > 0 ? (z + 1 - origin.z) * tDeltaZ : stepZ < 0 ? (origin.z - z) * tDeltaZ : Infinity;
+  let prev = [x, y, z], t = 0;
+  for (let i = 0; i < 128; i++) {
+    if (getBlock(x, y, z) !== 0) return { block: [x, y, z], prev, dist: t };
+    prev = [x, y, z];
+    if (tMaxX < tMaxY && tMaxX < tMaxZ) { t = tMaxX; tMaxX += tDeltaX; x += stepX; }
+    else if (tMaxY < tMaxZ) { t = tMaxY; tMaxY += tDeltaY; y += stepY; }
+    else { t = tMaxZ; tMaxZ += tDeltaZ; z += stepZ; }
+    if (t > maxDist) return null;
+  }
+  return null;
+}
+
+// ============================================================
+// Física compartilhada (AABB vs voxels)
+// ============================================================
+function moveEntity(e, dt) {
+  e.onGround = false;
+  e.hitWall = false;
+  const half = e.width / 2;
+  const eps = 0.001;
+
+  const axes = ['y', 'x', 'z'];
+  for (const axis of axes) {
+    e.pos[axis] += e.vel[axis] * dt;
+    const minX = Math.floor(e.pos.x - half), maxX = Math.floor(e.pos.x + half);
+    const minY = Math.floor(e.pos.y), maxY = Math.floor(e.pos.y + e.height);
+    const minZ = Math.floor(e.pos.z - half), maxZ = Math.floor(e.pos.z + half);
+    for (let bx = minX; bx <= maxX; bx++)
+    for (let by = minY; by <= maxY; by++)
+    for (let bz = minZ; bz <= maxZ; bz++) {
+      if (getBlock(bx, by, bz) === 0) continue;
+      // verifica sobreposição real
+      if (e.pos.x - half >= bx + 1 || e.pos.x + half <= bx) continue;
+      if (e.pos.y >= by + 1 || e.pos.y + e.height <= by) continue;
+      if (e.pos.z - half >= bz + 1 || e.pos.z + half <= bz) continue;
+      if (axis === 'y') {
+        if (e.vel.y <= 0) { e.pos.y = by + 1 + eps; e.onGround = true; }
+        else e.pos.y = by - e.height - eps;
+        e.vel.y = 0;
+      } else if (axis === 'x') {
+        e.pos.x = e.vel.x > 0 ? bx - half - eps : bx + 1 + half + eps;
+        e.vel.x = 0; e.hitWall = true;
+      } else {
+        e.pos.z = e.vel.z > 0 ? bz - half - eps : bz + 1 + half + eps;
+        e.vel.z = 0; e.hitWall = true;
+      }
+    }
+  }
+}
+function entityIntersectsBlock(e, bx, by, bz) {
+  const half = e.width / 2;
+  return e.pos.x - half < bx + 1 && e.pos.x + half > bx &&
+         e.pos.y < by + 1 && e.pos.y + e.height > by &&
+         e.pos.z - half < bz + 1 && e.pos.z + half > bz;
+}
+
+// ============================================================
+// Jogador
+// ============================================================
+const player = {
+  pos: new THREE.Vector3(WORLD_X / 2 + 0.5, 0, WORLD_Z / 2 + 0.5),
+  vel: new THREE.Vector3(),
+  width: PLAYER.width, height: PLAYER.height,
+  onGround: false, hitWall: false,
+  flying: false,
+  hp: 20, maxHp: 20,
+  yaw: 0, pitch: 0,
+  attackTimer: 0,
+  dead: false,
+  kills: 0,
+};
+function spawnPlayer() {
+  player.pos.set(WORLD_X / 2 + 0.5, groundHeight(WORLD_X / 2, WORLD_Z / 2) + 0.5, WORLD_Z / 2 + 0.5);
+  player.vel.set(0, 0, 0);
+  player.hp = player.maxHp;
+  player.dead = false;
+  player.flying = false;
+}
+
+// ============================================================
+// Zumbis
+// ============================================================
+const zombieGroup = new THREE.Group();
+scene.add(zombieGroup);
+const zombies = [];
+
+function makeZombieMesh() {
+  const g = new THREE.Group();
+  const skin = 0x4caf50, shirt = 0x2e7d59, pants = 0x4a4063;
+  const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
+  const box = (w, h, d, c, x, y, z) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c));
+    m.position.set(x, y, z);
+    return m;
+  };
+  const legL = box(0.22, 0.75, 0.22, pants, -0.13, 0.375, 0);
+  const legR = box(0.22, 0.75, 0.22, pants, 0.13, 0.375, 0);
+  const body = box(0.5, 0.7, 0.26, shirt, 0, 1.1, 0);
+  const armL = box(0.18, 0.18, 0.65, skin, -0.34, 1.32, 0.28);
+  const armR = box(0.18, 0.18, 0.65, skin, 0.34, 1.32, 0.28);
+  const head = box(0.5, 0.5, 0.5, skin, 0, 1.7, 0);
+  // olhos
+  const eyeMat = mat(0x1b1b1b);
+  for (const ex of [-0.12, 0.12]) {
+    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.02), eyeMat);
+    eye.position.set(ex, 1.74, 0.26);
+    g.add(eye);
+  }
+  g.add(legL, legR, body, armL, armR, head);
+  g.userData.legs = [legL, legR];
+  g.userData.arms = [armL, armR];
+  return g;
+}
+
+function spawnZombie() {
+  if (zombies.length >= ZOMBIE.maxCount) return;
+  for (let tries = 0; tries < 10; tries++) {
+    const ang = Math.random() * Math.PI * 2;
+    const dist = 15 + Math.random() * 15;
+    const x = Math.floor(player.pos.x + Math.cos(ang) * dist) + 0.5;
+    const z = Math.floor(player.pos.z + Math.sin(ang) * dist) + 0.5;
+    if (x < 2 || z < 2 || x >= WORLD_X - 2 || z >= WORLD_Z - 2) continue;
+    const y = groundHeight(x, z);
+    if (y <= 0 || y >= WORLD_Y - 4) continue;
+    const mesh = makeZombieMesh();
+    const hpBg = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0x300000, depthTest: false }));
+    const hpFg = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0x22dd22, depthTest: false }));
+    hpBg.scale.set(0.8, 0.08, 1); hpBg.position.y = 2.25;
+    hpFg.scale.set(0.8, 0.08, 1); hpFg.position.y = 2.25;
+    mesh.add(hpBg, hpFg);
+    const z2 = {
+      pos: new THREE.Vector3(x, y + 0.1, z),
+      vel: new THREE.Vector3(),
+      width: ZOMBIE.width, height: ZOMBIE.height,
+      onGround: false, hitWall: false,
+      hp: ZOMBIE.hp,
+      mesh, hpFg,
+      attackTimer: Math.random(),
+      wanderAngle: Math.random() * Math.PI * 2,
+      wanderTimer: 0,
+      flashTimer: 0,
+      animPhase: Math.random() * 10,
+    };
+    mesh.userData.zombie = z2;
+    mesh.position.copy(z2.pos);
+    zombieGroup.add(mesh);
+    zombies.push(z2);
+    return;
+  }
+}
+
+function damageZombie(z, dmg, knockDir) {
+  z.hp -= dmg;
+  z.flashTimer = 0.15;
+  z.mesh.traverse(o => {
+    if (o.isMesh && o.material.color) {
+      if (!o.userData.baseColor) o.userData.baseColor = o.material.color.clone();
+      o.material.color.set(0xff4444);
+    }
+  });
+  z.vel.x += knockDir.x * 7;
+  z.vel.z += knockDir.z * 7;
+  z.vel.y = 4.5;
+  if (z.hp <= 0) {
+    killZombie(z);
+    player.kills++;
+  }
+}
+function killZombie(z) {
+  zombieGroup.remove(z.mesh);
+  z.mesh.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
+  zombies.splice(zombies.indexOf(z), 1);
+}
+
+function updateZombie(z, dt, time) {
+  // flash de dano
+  if (z.flashTimer > 0) {
+    z.flashTimer -= dt;
+    if (z.flashTimer <= 0) {
+      z.mesh.traverse(o => {
+        if (o.isMesh && o.userData.baseColor) o.material.color.copy(o.userData.baseColor);
+      });
+    }
+  }
+
+  const toPlayer = new THREE.Vector3().subVectors(player.pos, z.pos);
+  const distXZ = Math.hypot(toPlayer.x, toPlayer.z);
+
+  // despawn longe demais ou caiu do mundo
+  if (distXZ > 60 || z.pos.y < -10) { killZombie(z); return; }
+
+  let moveX = 0, moveZ = 0;
+  const chasing = distXZ < 28 && !player.dead;
+  if (chasing && distXZ > 0.4) {
+    moveX = toPlayer.x / distXZ; moveZ = toPlayer.z / distXZ;
+  } else {
+    z.wanderTimer -= dt;
+    if (z.wanderTimer <= 0) {
+      z.wanderTimer = 2 + Math.random() * 3;
+      z.wanderAngle = Math.random() * Math.PI * 2;
+    }
+    moveX = Math.cos(z.wanderAngle) * 0.4;
+    moveZ = Math.sin(z.wanderAngle) * 0.4;
+  }
+
+  const speed = chasing ? ZOMBIE.speed : ZOMBIE.speed * 0.5;
+  // aceleração suave para o knockback funcionar
+  z.vel.x += (moveX * speed - z.vel.x) * Math.min(1, dt * 8);
+  z.vel.z += (moveZ * speed - z.vel.z) * Math.min(1, dt * 8);
+  z.vel.y -= GRAVITY * dt;
+
+  moveEntity(z, dt);
+  if (z.hitWall && z.onGround) z.vel.y = 7.5; // pula obstáculos
+
+  // ataque por contato
+  z.attackTimer -= dt;
+  if (!player.dead && z.attackTimer <= 0 && distXZ < 1.1 &&
+      player.pos.y < z.pos.y + z.height && player.pos.y + player.height > z.pos.y) {
+    z.attackTimer = ZOMBIE.attackCooldown;
+    damagePlayer(ZOMBIE.damage);
+  }
+
+  // visual
+  z.mesh.position.copy(z.pos);
+  z.mesh.rotation.y = Math.atan2(moveX, moveZ);
+  const swing = Math.sin(time * 7 + z.animPhase) * Math.min(1, Math.hypot(z.vel.x, z.vel.z));
+  z.mesh.userData.legs[0].rotation.x = swing * 0.7;
+  z.mesh.userData.legs[1].rotation.x = -swing * 0.7;
+  z.hpFg.scale.x = 0.8 * Math.max(0, z.hp / ZOMBIE.hp);
+  z.hpFg.position.x = -0.4 * (1 - z.hp / ZOMBIE.hp);
+}
+
+// ============================================================
+// Combate / dano ao jogador
+// ============================================================
+const damageFlash = document.getElementById('damage-flash');
+function damagePlayer(dmg) {
+  if (player.dead) return;
+  player.hp -= dmg;
+  damageFlash.style.transition = 'none';
+  damageFlash.style.opacity = '1';
+  requestAnimationFrame(() => {
+    damageFlash.style.transition = 'opacity 0.4s';
+    damageFlash.style.opacity = '0';
+  });
+  updateHealthUI();
+  if (player.hp <= 0) {
+    player.hp = 0;
+    player.dead = true;
+    document.exitPointerLock();
+    document.getElementById('death').classList.remove('hidden');
+  }
+}
+
+const raycaster = new THREE.Raycaster();
+function tryAttack() {
+  if (player.attackTimer > 0) return false;
+  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+  raycaster.far = ATTACK_RANGE;
+  const hits = raycaster.intersectObjects(zombieGroup.children, true);
+  if (hits.length === 0) return false;
+  // bloqueado por parede?
+  const blockHit = raycastVoxel(camera.position, raycaster.ray.direction, ATTACK_RANGE);
+  if (blockHit && blockHit.dist < hits[0].distance) return false;
+  let obj = hits[0].object;
+  while (obj && !obj.userData.zombie) obj = obj.parent;
+  if (!obj) return false;
+  player.attackTimer = ATTACK_COOLDOWN;
+  const dir = raycaster.ray.direction.clone();
+  dir.y = 0;
+  dir.normalize();
+  damageZombie(obj.userData.zombie, ATTACK_DAMAGE, dir);
+  return true;
+}
+
+// ============================================================
+// Controles
+// ============================================================
+const keys = {};
+let selectedSlot = 0;
+let locked = false;
+let mouseDown = 0; // 0=nenhum, 1=esq, 2=dir
+let actionTimer = 0;
+
+const overlay = document.getElementById('overlay');
+const canvas = renderer.domElement;
+
+overlay.addEventListener('click', () => {
+  if (player.dead) return;
+  canvas.requestPointerLock();
+});
+document.addEventListener('pointerlockchange', () => {
+  locked = document.pointerLockElement === canvas;
+  overlay.classList.toggle('hidden', locked);
+  if (!locked) { mouseDown = 0; }
+});
+document.addEventListener('mousemove', (e) => {
+  if (!locked) return;
+  player.yaw -= e.movementX * 0.0024;
+  player.pitch -= e.movementY * 0.0024;
+  player.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, player.pitch));
+});
+document.addEventListener('keydown', (e) => {
+  keys[e.code] = true;
+  if (e.code.startsWith('Digit')) {
+    const n = parseInt(e.code.slice(5));
+    if (n >= 1 && n <= 9) { selectedSlot = n - 1; updateHotbarUI(); }
+  }
+  if (e.code === 'KeyF' && locked) {
+    player.flying = !player.flying;
+    player.vel.y = 0;
+  }
+});
+document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+document.addEventListener('wheel', (e) => {
+  if (!locked) return;
+  selectedSlot = (selectedSlot + (e.deltaY > 0 ? 1 : -1) + 9) % 9;
+  updateHotbarUI();
+});
+document.addEventListener('contextmenu', (e) => e.preventDefault());
+document.addEventListener('mousedown', (e) => {
+  if (!locked) return;
+  mouseDown = e.button === 0 ? 1 : e.button === 2 ? 2 : 0;
+  actionTimer = 0; // age imediatamente
+});
+document.addEventListener('mouseup', () => { mouseDown = 0; });
+
+document.getElementById('respawn-btn').addEventListener('click', () => {
+  spawnPlayer();
+  updateHealthUI();
+  document.getElementById('death').classList.add('hidden');
+  canvas.requestPointerLock();
+});
+
+function doAction() {
+  if (mouseDown === 1) {
+    // atacar tem prioridade; senão quebra bloco
+    if (tryAttack()) return;
+    const hit = raycastVoxel(camera.position, getLookDir(), REACH);
+    if (hit) {
+      setBlock(...hit.block, 0);
+      rebuildWorld();
+    }
+  } else if (mouseDown === 2) {
+    const hit = raycastVoxel(camera.position, getLookDir(), REACH);
+    if (hit) {
+      const [px, py, pz] = hit.prev;
+      if (getBlock(px, py, pz) !== 0) return;
+      if (entityIntersectsBlock(player, px, py, pz)) return;
+      for (const z of zombies) if (entityIntersectsBlock(z, px, py, pz)) return;
+      setBlock(px, py, pz, selectedSlot + 1);
+      rebuildWorld();
+    }
+  }
+}
+function getLookDir() {
+  return new THREE.Vector3(
+    -Math.sin(player.yaw) * Math.cos(player.pitch),
+    Math.sin(player.pitch),
+    -Math.cos(player.yaw) * Math.cos(player.pitch)
+  );
+}
+
+// ============================================================
+// HUD
+// ============================================================
+const hotbarEl = document.getElementById('hotbar');
+function buildHotbarUI() {
+  hotbarEl.innerHTML = '';
+  for (let i = 1; i <= 9; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'slot' + (i - 1 === selectedSlot ? ' selected' : '');
+    const texName = BLOCKS[i].faces.all || BLOCKS[i].faces.side;
+    const img = document.createElement('img');
+    img.src = textureCanvases[texName].toDataURL();
+    slot.appendChild(img);
+    const key = document.createElement('span');
+    key.className = 'key'; key.textContent = i;
+    slot.appendChild(key);
+    const name = document.createElement('span');
+    name.className = 'name'; name.textContent = BLOCKS[i].name;
+    slot.appendChild(name);
+    hotbarEl.appendChild(slot);
+  }
+}
+function updateHotbarUI() {
+  [...hotbarEl.children].forEach((s, i) => s.classList.toggle('selected', i === selectedSlot));
+}
+const healthEl = document.getElementById('health');
+function updateHealthUI() {
+  healthEl.innerHTML = '';
+  for (let i = 0; i < 10; i++) {
+    const span = document.createElement('span');
+    span.textContent = '❤';
+    span.style.color = '#e3170d';
+    if (player.hp < (i + 1) * 2) span.className = 'empty';
+    healthEl.appendChild(span);
+  }
+}
+const infoEl = document.getElementById('info');
+const crosshairEl = document.getElementById('crosshair');
+
+// ============================================================
+// Loop principal
+// ============================================================
+generateWorld();
+rebuildWorld();
+spawnPlayer();
+buildHotbarUI();
+updateHealthUI();
+
+let zombieSpawnTimer = 3;
+let lastTime = performance.now();
+
+function tick() {
+  requestAnimationFrame(tick);
+  const now = performance.now();
+  const dt = Math.min(0.05, (now - lastTime) / 1000);
+  lastTime = now;
+  const time = now / 1000;
+
+  if (!player.dead) {
+    // --- movimento do jogador ---
+    let fwd = 0, strafe = 0;
+    if (locked) {
+      if (keys['KeyW']) fwd += 1;
+      if (keys['KeyS']) fwd -= 1;
+      if (keys['KeyA']) strafe -= 1;
+      if (keys['KeyD']) strafe += 1;
+    }
+    const len = Math.hypot(fwd, strafe) || 1;
+    fwd /= len; strafe /= len;
+    const sin = Math.sin(player.yaw), cos = Math.cos(player.yaw);
+    const speed = player.flying ? PLAYER.flySpeed : PLAYER.speed;
+    const vx = (-sin * fwd + cos * strafe) * speed;
+    const vz = (-cos * fwd - sin * strafe) * speed;
+    player.vel.x += (vx - player.vel.x) * Math.min(1, dt * 12);
+    player.vel.z += (vz - player.vel.z) * Math.min(1, dt * 12);
+
+    if (player.flying) {
+      let vy = 0;
+      if (locked && keys['Space']) vy += speed;
+      if (locked && (keys['ShiftLeft'] || keys['ShiftRight'])) vy -= speed;
+      player.vel.y += (vy - player.vel.y) * Math.min(1, dt * 12);
+    } else {
+      player.vel.y -= GRAVITY * dt;
+      if (locked && keys['Space'] && player.onGround) player.vel.y = PLAYER.jump;
+    }
+    moveEntity(player, dt);
+    if (player.onGround) player.flying = false;
+    if (player.pos.y < -15) damagePlayer(1000); // caiu do mundo
+
+    player.attackTimer -= dt;
+
+    // --- ações (segurar o mouse repete) ---
+    if (locked && mouseDown) {
+      actionTimer -= dt;
+      if (actionTimer <= 0) {
+        actionTimer = 0.22;
+        doAction();
+      }
+    }
+  }
+
+  // --- câmera ---
+  camera.position.set(player.pos.x, player.pos.y + PLAYER.eye, player.pos.z);
+  camera.rotation.set(0, 0, 0);
+  camera.rotateY(player.yaw);
+  camera.rotateX(player.pitch);
+
+  // --- destaque do bloco mirado ---
+  const hit = locked && !player.dead ? raycastVoxel(camera.position, getLookDir(), REACH) : null;
+  if (hit) {
+    highlight.visible = true;
+    highlight.position.set(hit.block[0] + 0.5, hit.block[1] + 0.5, hit.block[2] + 0.5);
+  } else highlight.visible = false;
+
+  // --- mira fica vermelha quando aponta para inimigo ---
+  if (locked && !player.dead) {
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    raycaster.far = ATTACK_RANGE;
+    const enemyHits = raycaster.intersectObjects(zombieGroup.children, true);
+    const blocked = enemyHits.length > 0 && hit && hit.dist < enemyHits[0].distance;
+    crosshairEl.classList.toggle('enemy', enemyHits.length > 0 && !blocked);
+  } else crosshairEl.classList.remove('enemy');
+
+  // --- zumbis ---
+  zombieSpawnTimer -= dt;
+  if (zombieSpawnTimer <= 0) {
+    zombieSpawnTimer = 4;
+    spawnZombie();
+  }
+  for (let i = zombies.length - 1; i >= 0; i--) updateZombie(zombies[i], dt, time);
+
+  // --- HUD ---
+  infoEl.innerHTML =
+    `Zumbis: ${zombies.length} &nbsp;|&nbsp; Abates: ${player.kills}` +
+    (player.flying ? ' &nbsp;|&nbsp; ✈ voando' : '');
+
+  renderer.render(scene, camera);
+}
+tick();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
